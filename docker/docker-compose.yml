@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  airflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow
+    restart: always
+    depends_on:
+      - mongo
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__WORKERS: 1
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
+    volumes:
+      - ../dags:/opt/airflow/dags
+      - ..:/opt/airflow/project
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow webserver &
+      airflow scheduler
+      "
+  # airflow:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: airflow
+  #   restart: always
+  #   depends_on:
+  #     - mongo
+  #   environment:
+  #     AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+  #     AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+  #     AIRFLOW__WEBSERVER__WORKERS: 1
+  #   volumes:
+  #     - ../dags:/opt/airflow/dags
+  #     - ..:/opt/airflow/project
+  #   ports:
+  #     - "8080:8080"
+  #   command: standalone
+
+volumes:
+  mongo_data:
+  # airflow_data:                       # <--- ADD THIS

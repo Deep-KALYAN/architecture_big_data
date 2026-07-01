@@ -3,4 +3,7 @@ __pycache__/
 *.pyc
 notaire_cookies.json
 tmp/
+data/
 .env
+/extrafiles
+/test

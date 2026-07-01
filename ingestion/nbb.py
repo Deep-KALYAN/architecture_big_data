@@ -4,6 +4,7 @@ import pandas as pd
 from io import StringIO
 from pathlib import Path
 from typing import List, Dict
+from ingestion.state import already_done, mark_done
 
 TMP = Path("data/bronze/nbb")
 # TMP = Path("tmp/pdfs")
@@ -133,12 +134,19 @@ def get_all_kpis(enterprise_number: str) -> List[Dict]:
     for deposit in deposits:
         deposit_id = deposit["id"]
         year = deposit["periodEndDateYear"]
+        bce = deposit["enterpriseNumber"]
+
+        if already_done(bce, "nbb", deposit_id):
+            print(f"  Skipping {year} (id={deposit_id})...")
+            continue
 
         print(f"  Processing {year} (id={deposit_id})...")
 
         # Always attempt PDF download (works for all years including migrated)
         try:
-            download_pdf(session, deposit)
+            pdf_path = download_pdf(session, deposit)
+            print("DEBUG: calling mark_done")
+            mark_done(bce, "nbb", deposit_id, year, str(pdf_path))
         except Exception as e:
             print(f"    ✗ PDF failed for {year}: {e}")
         time.sleep(0.3)

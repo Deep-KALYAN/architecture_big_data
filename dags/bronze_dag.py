@@ -8,6 +8,7 @@ from airflow.operators.python import PythonOperator
 from datetime import datetime
 
 from ingestion.mongo import companies
+
 from ingestion.nbb import get_all_kpis
 # from ingestion.notaire import get_all_statutes, get_session
 
@@ -15,10 +16,10 @@ from ingestion.nbb import get_all_kpis
 # --- TASKS ---
 
 def run_nbb():
-    for c in companies.find().limit(20):   # ✅ LIMIT
+    for c in companies.find().limit(5):   # ✅ LIMIT
         bce = c["bce"]
         print(f"NBB → {bce}")
-
+        print("DEBUG BCE:", c["bce"])
         try:
             get_all_kpis(bce)
         except Exception as e:

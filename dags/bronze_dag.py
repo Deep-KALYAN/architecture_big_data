@@ -10,13 +10,13 @@ from datetime import datetime
 from ingestion.mongo import companies
 
 from ingestion.nbb import get_all_kpis
-# from ingestion.notaire import get_all_statutes, get_session
+from ingestion.notaire import get_all_statutes, get_session
 
 
 # --- TASKS ---
 
 def run_nbb():
-    for c in companies.find().limit(5):   # ✅ LIMIT
+    for c in companies.find().limit(50):   # ✅ LIMIT
         bce = c["bce"]
         print(f"NBB → {bce}")
         print("DEBUG BCE:", c["bce"])
@@ -26,17 +26,17 @@ def run_nbb():
             print(f"Error NBB: {bce} → {e}")
 
 
-# def run_notaire():
-#     session = get_session()
+def run_notaire():
+    session = get_session()
 
-#     for c in companies.find().limit(20):   # ✅ LIMIT
-#         bce = c["bce"]
-#         print(f"NOTAIRE → {bce}")
+    for c in companies.find().limit(50):   # ✅ LIMIT
+        bce = c["bce"]
+        print(f"NOTAIRE → {bce}")
 
-#         try:
-#             get_all_statutes(bce, session=session)
-#         except Exception as e:
-#             print(f"Error NOTAIRE: {bce} → {e}")
+        try:
+            get_all_statutes(bce, session=session)
+        except Exception as e:
+            print(f"Error NOTAIRE: {bce} → {e}")
 
 
 # --- DAG ---
@@ -53,9 +53,9 @@ with DAG(
         python_callable=run_nbb
     )
 
-    # task_notaire = PythonOperator(
-    #     task_id="fetch_notaire",
-    #     python_callable=run_notaire
-    # )
+    task_notaire = PythonOperator(
+        task_id="fetch_notaire",
+        python_callable=run_notaire
+    )
 
-    # task_nbb >> task_notaire
+    task_nbb >> task_notaire

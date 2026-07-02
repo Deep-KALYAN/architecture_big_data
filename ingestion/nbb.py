@@ -5,6 +5,11 @@ from io import StringIO
 from pathlib import Path
 from typing import List, Dict
 from ingestion.state import already_done, mark_done
+from ingestion.hdfs_client import upload_to_hdfs
+from hdfs import InsecureClient
+
+session = requests.Session()
+client = InsecureClient("http://namenode:9870", user="root", session=session)
 
 TMP = Path("data/bronze/nbb")
 # TMP = Path("tmp/pdfs")
@@ -145,8 +150,13 @@ def get_all_kpis(enterprise_number: str) -> List[Dict]:
         # Always attempt PDF download (works for all years including migrated)
         try:
             pdf_path = download_pdf(session, deposit)
+            # ===  ADD HDFS UPLOAD HERE ===
+            hdfs_path = f"/bronze/nbb/{bce}/{year}/{pdf_path.name}"
+            print(f"    Uploading PDF to HDFS: {hdfs_path}")
+            upload_to_hdfs(str(pdf_path), hdfs_path)
+
             print("DEBUG: calling mark_done")
-            mark_done(bce, "nbb", deposit_id, year, str(pdf_path))
+            mark_done(bce, "nbb", deposit_id, year, hdfs_path)
         except Exception as e:
             print(f"    ✗ PDF failed for {year}: {e}")
         time.sleep(0.3)

@@ -4,7 +4,10 @@ import pandas as pd
 from io import StringIO
 from pathlib import Path
 from typing import List, Dict
-from ingestion.state import already_done, mark_done
+
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
+from ingestion.state import mark_done
 from ingestion.hdfs_client import upload_to_hdfs
 from hdfs import InsecureClient
 
@@ -29,9 +32,25 @@ HEADERS = {
 
 def make_session(enterprise_number: str) -> requests.Session:
     session = requests.Session()
+    # Define a robust retry policy for stubborn endpoints
+    retries = Retry(
+        total=3,                # Retry 3 times before raising an error
+        backoff_factor=2,       # Wait 2s, then 4s, then 8s between retries
+        status_forcelist=[429, 500, 502, 503, 504], # Catch both 429s and hidden 500 blocks
+        raise_on_status=True    # Still raise an exception if all retries fail
+    )
+    
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
     session.headers.update(HEADERS)
     page_url = f"https://consult.cbso.nbb.be/consult-enterprise/{enterprise_number}"
     session.headers.update({"Referer": page_url})
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json, text/plain, */*"
+    })
     session.get(page_url)  # establishes ASLBSA, ASLBSACORS, JSESSIONID cookies
     return session
 
@@ -133,37 +152,47 @@ def compute_kpis(codes: dict) -> dict:
 
 def get_all_kpis(enterprise_number: str) -> List[Dict]:
     session = make_session(enterprise_number)
-    deposits = get_deposits(session, enterprise_number)
+    
+    try:
+        deposits = get_deposits(session, enterprise_number)
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            print("⚠️ NBB Rate Limit Hit (429)! Backing off execution...")
+            time.sleep(5) # Give the external API breathing room
+        raise e
 
     results = []
+    successful_filings_count = 0
+
     for deposit in deposits:
         deposit_id = deposit["id"]
-        year = deposit["periodEndDateYear"]
+        year = int(deposit.get("periodEndDateYear", 0))
         bce = deposit["enterpriseNumber"]
-
-        if already_done(bce, "nbb", deposit_id):
-            print(f"  Skipping {year} (id={deposit_id})...")
+        
+        # --- REQUIREMENT: Filter >= 2021 ---
+        # The document requires filtering filings dynamically based on accounting period 
+        if year < 2021 or year > 2025:
+            print(f"  Skipping year {year} (Out of 2021-2025 scope)")
             continue
 
         print(f"  Processing {year} (id={deposit_id})...")
 
-        # Always attempt PDF download (works for all years including migrated)
+        # Attempt PDF download and push straight to HDFS
         try:
             pdf_path = download_pdf(session, deposit)
-            # ===  ADD HDFS UPLOAD HERE ===
             hdfs_path = f"/bronze/nbb/{bce}/{year}/{pdf_path.name}"
             print(f"    Uploading PDF to HDFS: {hdfs_path}")
             upload_to_hdfs(str(pdf_path), hdfs_path)
-
-            print("DEBUG: calling mark_done")
-            mark_done(bce, "nbb", deposit_id, year, hdfs_path)
+            successful_filings_count += 1
         except Exception as e:
-            print(f"    ✗ PDF failed for {year}: {e}")
-        time.sleep(0.3)
+            print(f"    ✗ PDF pipeline failed for {year}: {e}")
+            raise e
+        # Add a short delay right after downloading a PDF to breathe
+        time.sleep(1.5)
 
-        # CSV only available for non-migrated filings
+        # CSV is only available for newer native formats
         if deposit.get("migration"):
-            print(f"    Skipping CSV for {year} (legacy/migrated filing)")
+            print(f"    Skipping CSV for {year} (migrated legacy filing)")
             continue
 
         try:
@@ -174,10 +203,61 @@ def get_all_kpis(enterprise_number: str) -> List[Dict]:
             kpis["reference"] = deposit["reference"]
             results.append(kpis)
         except Exception as e:
-            print(f"    ✗ CSV failed for {year}: {e}")
-        time.sleep(0.3)
+            # Check if this specific CSV failed due to a 429 rate limit
+            if "429" in str(e):
+                print("    ⚠️ Hit 429 on CSV endpoint. Raising to trigger DAG backoff.")
+                raise e
+        time.sleep(2.0) # Gentle rate-limiting protection
 
-    return results
+    return results, successful_filings_count
+
+# def get_all_kpis(enterprise_number: str) -> List[Dict]:
+#     session = make_session(enterprise_number)
+#     deposits = get_deposits(session, enterprise_number)
+
+#     results = []
+#     for deposit in deposits:
+#         deposit_id = deposit["id"]
+#         year = deposit["periodEndDateYear"]
+#         bce = deposit["enterpriseNumber"]
+
+#         if already_done(bce, "nbb", deposit_id):
+#             print(f"  Skipping {year} (id={deposit_id})...")
+#             continue
+
+#         print(f"  Processing {year} (id={deposit_id})...")
+
+#         # Always attempt PDF download (works for all years including migrated)
+#         try:
+#             pdf_path = download_pdf(session, deposit)
+#             # ===  ADD HDFS UPLOAD HERE ===
+#             hdfs_path = f"/bronze/nbb/{bce}/{year}/{pdf_path.name}"
+#             print(f"    Uploading PDF to HDFS: {hdfs_path}")
+#             upload_to_hdfs(str(pdf_path), hdfs_path)
+
+#             print("DEBUG: calling mark_done")
+#             mark_done(bce, "nbb", deposit_id, year, hdfs_path)
+#         except Exception as e:
+#             print(f"    ✗ PDF failed for {year}: {e}")
+#         time.sleep(2)
+
+#         # CSV only available for non-migrated filings
+#         if deposit.get("migration"):
+#             print(f"    Skipping CSV for {year} (legacy/migrated filing)")
+#             continue
+
+#         try:
+#             csv_text = download_csv(session, deposit_id)
+#             codes = parse_csv(csv_text)
+#             kpis = compute_kpis(codes)
+#             kpis["year"] = year
+#             kpis["reference"] = deposit["reference"]
+#             results.append(kpis)
+#         except Exception as e:
+#             print(f"    ✗ CSV failed for {year}: {e}")
+#         time.sleep(2)
+
+#     return results
 
 
 # # --- Run ---

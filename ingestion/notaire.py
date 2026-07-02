@@ -147,7 +147,7 @@ def get_statutes(session: requests.Session, enterprise_number: str) -> List[Dict
         if not batch or len(all_statutes) >= total:
             break
         offset += PAGE_SIZE
-        time.sleep(0.3)
+        time.sleep(2)
 
     done = [s for s in all_statutes if s.get("documentStatus") == "DONE"]
     log.info(f"  [{enterprise_number}] → {len(done)} DONE")
@@ -197,7 +197,7 @@ def get_all_statutes(
     for statute in statutes:
         pdf_path = download_statute_pdf(session, enterprise_number, statute, dest_dir)
         results.append({**statute, "local_pdf": str(pdf_path) if pdf_path else None})
-        time.sleep(0.3)
+        time.sleep(2)
     return results
 
 

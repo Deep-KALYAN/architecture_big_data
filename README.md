@@ -1814,6 +1814,8 @@ mongodb://localhost:27017
 <!-- Create index -->
 col.create_index("bce")
 
+ docker exec -it mongo mongosh 
+
 ### Virtual environment
 1. Create the environment
 python -m venv .venv

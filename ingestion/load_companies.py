@@ -125,8 +125,8 @@ for chunk_id, df_enterprise in enumerate(reader):
     print(f"Inserted {total_inserted} documents so far...")
 
     # ◄--- ADD THESE TWO LINES TO STOP AFTER 1 BATCH
-    print("Test chunk complete. Exiting loop.")
-    break
+    # print("Test chunk complete. Exiting loop.")
+    # break
 
 
 print("\nDONE ✅")

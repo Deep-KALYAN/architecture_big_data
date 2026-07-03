@@ -39,7 +39,7 @@ def get_existing_cities():
             {"$match": {"city": {"$ne": None, "$gt": ""}}},
             {"$group": {"_id": "$city"}},
             {"$sort": {"_id": 1}},
-            {"$limit": 50}
+            {"$limit": 550}
         ]
         
         # 1. Try pulling from the optimized hotel_gold layer
@@ -83,7 +83,7 @@ def search_companies(q: str = Query(..., min_length=2)):
                 "zipcode": {"$first": "$zipcode"},
                 "sector": {"$first": "$sector"}
             }},
-            {"$limit": 20}
+            {"$limit": 220}
         ]
         
         results = list(db["enterprise_silver"].aggregate(pipeline))
@@ -283,61 +283,91 @@ async def proxy_notaire_act(bce: str):
         detail="The document for this company could not be found in local or external repositories."
     )
 
-# @app.get("/api/proxy/act/{bce}")
-# async def proxy_notaire_act(bce: str):
-#     """
-#     Smart Gateway Proxy: 
-#     1. Checks if the PDF exists locally in our Bronze Layer file repository.
-#     2. If missing, falls back to querying the official federal Moniteur Belge PDF service.
-#     """
-#     # Define local data lake file path
-#     local_file_path = f"./data/bronze/statutes/{bce}.pdf"
+@app.get("/api/analytics/finance")
+def get_finance_analytics():
+    # 🔌 FIX 1: Use 127.0.0.1 because FastAPI runs directly on Windows host
+    client = MongoClient("mongodb://127.0.0.1:27017/") 
+    db = client["belgium"]
+    records = list(db["hotel_gold"].find({}))
     
-#     # --- STEP 1: CHECK THE LOCAL BRONZE LAYER CACHE FIRST ---
-#     if os.path.exists(local_file_path):
-#         print(f"📦 Cache Hit! Serving {bce}.pdf directly from local Bronze storage folder.")
-#         return FileResponse(
-#             path=local_file_path, 
-#             filename=f"BCE_{bce}_Statutes_Local.pdf", 
-#             media_type="application/pdf"
-#         )
-        
-#     # --- STEP 2: RESILIENT FALLBACK TO REAL MONITEUR BELGE GATEWAY ---
-#     # We clean the BCE number to ensure it's a solid 10-digit string
-#     clean_bce = bce.strip().replace(".", "").replace(" ", "")
+    total_turnover = 0
+    total_margin = 0
+    margin_count = 0
+    top_company = "N/A"
+    max_turnover = -1
     
-#     # Direct access pattern to public Belgian Enterprise records via Just.fgov.be
-#     target_url = f"https://www.ejustice.just.fgov.be/cgi_tsv/tsv_pdf.pl?f=a&bce={clean_bce}"
-    
-#     print(f"📡 Cache Miss! Proxying live fallback fetch to official Moniteur Belge for BCE: {clean_bce}")
-    
-#     # Using specific headers to simulate a clean browser handoff
-#     headers = {
-#         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-#     }
-
-#     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
-#         try:
-#             response = await client.get(target_url)
+    for r in records:
+        # 📌 FIX 2: Parse the nested "years" array from your actual schema
+        years_data = r.get("years", [])
+        if years_data:
+            # Sort to extract the highest/latest year block (e.g., 2025)
+            latest_year_data = sorted(years_data, key=lambda x: x.get("year", 0), reverse=True)[0]
             
-#             # Verify the response is an actual PDF payload from the state server
-#             if response.status_code != 200 or "application/pdf" not in response.headers.get("content-type", "").lower():
-#                 print(f"⚠️ External search returned code {response.status_code} or wrong content type.")
-#                 raise HTTPException(
-#                     status_code=404, 
-#                     detail=f"Official publication PDF for enterprise {clean_bce} was not found on the Moniteur Belge registry."
-#                 )
+            turnover = latest_year_data.get("ca", 0) or 0
+            margin = latest_year_data.get("marge_brute", 0) or 0
+            
+            total_turnover += turnover
+            if margin:
+                total_margin += margin
+                margin_count += 1
                 
-#             # Stream the valid PDF binary document straight back to the user tab
-#             return StreamingResponse(
-#                 content=asyncio.to_thread(lambda: [response.content]),
-#                 media_type="application/pdf",
-#                 headers={"Content-Disposition": f"inline; filename=Moniteur_Belge_{clean_bce}.pdf"}
-#             )
+            # Track the top market leader using the enterprise identifier
+            if turnover > max_turnover:
+                max_turnover = turnover
+                # Use enterprise_number since company_name isn't in root
+                top_company = f"Enterprise {r.get('enterprise_number', 'Unknown')} - {r.get('city', 'Unknown')}"
+                
+    avg_margin = total_margin / margin_count if margin_count > 0 else 0
+    
+    return {
+        "total_turnover": total_turnover,
+        "average_margin": avg_margin,
+        "market_leader": top_company,
+        "market_leader_revenue": max_turnover if max_turnover != -1 else 0
+    }
+    
+
+
+# @app.get("/api/analytics/finance")
+# def get_finance_analytics():
+#     # Connect directly to your hotel_gold serving collection
+#     client = MongoClient("mongodb://127.0.0.1:27017/") # Or mongo:27017 inside Docker
+#     db = client["belgium"]
+#     gold_coll = db["hotel_gold"]
+    
+#     # Grab all 161 records
+#     records = list(gold_coll.find({}))
+    
+#     total_turnover = 0
+#     total_margin = 0
+#     margin_count = 0
+#     top_company = "N/A"
+#     max_turnover = -1
+    
+#     for r in records:
+#         # Pull financials array (usually has multiple years; grab latest)
+#         financials = r.get("financials", [])
+#         if financials:
+#             # Sort to get the latest reported year exercise
+#             latest = sorted(financials, key=lambda x: x.get("year", ""), reverse=True)[0]
+#             turnover = latest.get("ca", 0) or 0
+#             margin = latest.get("marge_brute", 0) or 0
             
-#         except httpx.RequestError as exc:
-#             print(f"❌ Proxy Network Failure connecting to federal servers: {str(exc)}")
-#             raise HTTPException(
-#                 status_code=502, 
-#                 detail="Failed to connect to the external federal database gateway."
-#             )
+#             total_turnover += turnover
+#             if margin:
+#                 total_margin += margin
+#                 margin_count += 1
+                
+#             # Track the top market leader
+#             if turnover > max_turnover:
+#                 max_turnover = turnover
+#                 top_company = r.get("metadata", {}).get("company_name", r.get("company_name", "Unknown"))
+                
+#     avg_margin = total_margin / margin_count if margin_count > 0 else 0
+    
+#     return {
+#         "total_turnover": total_turnover,
+#         "average_margin": avg_margin,
+#         "market_leader": top_company,
+#         "market_leader_revenue": max_turnover
+#     }

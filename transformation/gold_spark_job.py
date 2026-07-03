@@ -2,14 +2,16 @@ import datetime
 from pymongo import MongoClient
 
 def run_gold_pipeline():
-    client = MongoClient("mongodb://127.0.0.1:27017/")
+    # client = MongoClient("mongodb://127.0.0.1:27017/")
+    client = MongoClient("mongodb://mongo:27017/")
     db = client["belgium"]
     silver_coll = db["enterprise_silver"]
     
     print("🚀 Running high-speed server-side aggregation for 1.9 Million records...")
     
     # Generate an authentic runtime timestamp string (e.g. "2026-07-02T15:25:00Z")
-    current_time_str = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # current_time_str = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    current_time_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     
     pipeline = [
         # 1. Filter out documents missing vital fields
